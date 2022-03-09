@@ -614,6 +614,7 @@ spFileVector(MatrixPtr Matrix, char *File, RealVector RHS, RealVector iRHS)
 
     /* Output vector. */
     Size = Matrix->Size;
+    /*
     if (Matrix->Complex)
     {
         for (I = 1; I <= Size; I++)
@@ -625,7 +626,7 @@ spFileVector(MatrixPtr Matrix, char *File, RealVector RHS, RealVector iRHS)
             if (Err < 0) return 0;
         }
     }
-    else
+    else*/
     {
 	for (I = 1; I <= Size; I++)
         {

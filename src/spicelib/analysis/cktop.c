@@ -27,6 +27,7 @@ int
 CKTop (CKTcircuit *ckt, long int firstmode, long int continuemode,
        int iterlim)
 {
+    fprintf(stderr, "** CKTop called once **\n");
     int converged;
 
 #ifdef HAS_PROGREP

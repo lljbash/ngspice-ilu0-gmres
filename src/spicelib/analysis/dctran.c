@@ -62,11 +62,16 @@ do { \
     ckt->CKTstat->STATtranSyncTime += ckt->CKTstat->STATsyncTime - startkTime; \
 } while(0)
 
+extern int DCtran_call_NIiter_count;
+extern int DCtran_is_calling_NIiter;
+int DCtran_call_NIiter_count = 0;
+int DCtran_is_calling_NIiter = 0;
 
 int
 DCtran(CKTcircuit *ckt,
        int restart)   /* forced restart flag */
 {
+    fprintf(stderr, "** DCtran called once **\n");
     TRANan *job = (TRANan *) ckt->CKTcurJob;
 
     int i;
@@ -748,7 +753,11 @@ resume:
 /* gtri - end - wbk - Set evt_step */
 #endif
 
+        fprintf(stderr, "** NIiter called here once **\n");
+        DCtran_is_calling_NIiter = 1;
         converged = NIiter(ckt,ckt->CKTtranMaxIter);
+        DCtran_is_calling_NIiter = 0;
+        DCtran_call_NIiter_count++;
 
 #ifdef XSPICE
         if(ckt->evt->counts.num_insts > 0) {

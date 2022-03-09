@@ -41,7 +41,9 @@ CKTdump(CKTcircuit *ckt, double ref, runDesc *plot)
     refData.rValue = ref;
     valData.v.numValue = ckt->CKTmaxEqNum-1;
     valData.v.vec.rVec = ckt->CKTrhsOld+1;
+    fprintf(stderr, "CKTdump called once\n");
     SPfrontEnd->OUTpData (plot, &refData, &valData);
+    fprintf(stderr, "\n");
 
 #ifdef CIDER
 /* 

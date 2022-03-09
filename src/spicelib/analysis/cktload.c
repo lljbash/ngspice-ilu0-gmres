@@ -27,6 +27,9 @@ Modified: 2000 AlansFixes
 
 static int ZeroNoncurRow(SMPmatrix *matrix, CKTnode *nodes, int rownum);
 
+extern int DCtran_call_NIiter_count;
+extern int DCtran_is_calling_NIiter;
+
 int
 CKTload(CKTcircuit *ckt)
 {
@@ -159,6 +162,22 @@ CKTload(CKTcircuit *ckt)
     }
     /* SMPprint(ckt->CKTmatrix, stdout); if you want to debug, this is a
     good place to start ... */
+    static int num_iter = 0;
+    static int last_NIiter_call = 0;
+    if (DCtran_is_calling_NIiter && DCtran_call_NIiter_count < 100) {
+        if (DCtran_call_NIiter_count > last_NIiter_call) {
+            last_NIiter_call = DCtran_call_NIiter_count;
+            num_iter = 0;
+        }
+        char buf[19];
+        sprintf(buf, "SMP/%02d-%03d", last_NIiter_call, num_iter);
+        SMPprint(ckt->CKTmatrix, buf);
+        sprintf(buf, "rhs/%02d-%03d", last_NIiter_call, num_iter);
+        SMPprintRHS(ckt->CKTmatrix, buf, ckt->CKTrhs, NULL);
+        ++num_iter;
+    }
+    /*SMPprint(ckt->CKTmatrix, "mat");*/
+    /*SMPprint(ckt->CKTmatrix, NULL);*/
 
     ckt->CKTstat->STATloadTime += SPfrontEnd->IFseconds()-startTime;
     return(OK);
