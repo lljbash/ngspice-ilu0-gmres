@@ -15,7 +15,8 @@ libni_la_SOURCES = \
 		nipred.c	\
 		nipzmeth.c	\
 		nireinit.c	\
-		nisenre.c
+		nisenre.c   \
+		lljbash.c
 
 
 AM_CPPFLAGS = @AM_CPPFLAGS@ -I$(top_srcdir)/src/include

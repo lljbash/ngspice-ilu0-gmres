@@ -14,6 +14,7 @@ Modified: 2000  AlansFixes
 #include "ngspice/sperror.h"
 #include "ngspice/fteext.h"
 #include "ngspice/missing_math.h"
+#include "ngspice/lljbash.h"
 
 /* for setting breakpoints required by dbs data base */
 extern struct dbcomm *dbs;
@@ -68,6 +69,8 @@ DCtran(CKTcircuit *ckt,
        int restart)   /* forced restart flag */
 {
     TRANan *job = (TRANan *) ckt->CKTcurJob;
+    LLJBASH_Solver solver;
+    lljbash_solver.Init(&solver);
 
     int i;
     double olddelta;
@@ -748,7 +751,8 @@ resume:
 /* gtri - end - wbk - Set evt_step */
 #endif
 
-        converged = NIiter(ckt,ckt->CKTtranMaxIter);
+        /*converged = NIiter(ckt,ckt->CKTtranMaxIter);*/
+        converged = lljbash_solver.NIiter(&solver, ckt, ckt->CKTtranMaxIter);
 
 #ifdef XSPICE
         if(ckt->evt->counts.num_insts > 0) {

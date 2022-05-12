@@ -1,32 +1,47 @@
-/**********
-Copyright 1990 Regents of the University of California.  All rights reserved.
-Author: 1985 Thomas L. Quarles
-Modified: 2001 AlansFixes
-**********/
-
-/*
- * NIiter(ckt,maxIter)
- *
- *  This subroutine performs the actual numerical iteration.
- *  It uses the sparse matrix stored in the circuit struct
- *  along with the matrix loading program, the load data, the
- *  convergence test function, and the convergence parameters
- */
-
-#include "ngspice/ngspice.h"
+#include "ngspice/lljbash.h"
+#include <dlfcn.h>
+#include "ngspice/spmatrix.h"
+#include "../sparse/spdefs.h"
 #include "ngspice/trandefs.h"
-#include "ngspice/cktdefs.h"
 #include "ngspice/smpdefs.h"
-#include "ngspice/sperror.h"
+#include "ngspice/memory.h"
 
+void LLJBASH_InitSolver(LLJBASH_Solver* solver) {
+    solver->ilu = lljbash.IluSolverCreate(8);
+    solver->gmres = lljbash.GmresCreate();
+    lljbash.GmresSetPreconditioner(solver->gmres, solver->ilu);
+}
 
-/* NIiter() - return value is non-zero for convergence failure */
+void LLJBASH_FreeSolver(LLJBASH_Solver* solver) {
+    lljbash.IluSolverDestroy(solver->ilu);
+    lljbash.GmresDestroy(solver->gmres);
+}
 
-int
-NIiter(CKTcircuit *ckt, int maxIter)
-{
+void LLJBASH_ImportMatrix(LLJBASH_Solver* solver, const SMPmatrix* smp) {
+    LLJBASH_CscMatrix* mat = lljbash.IluSolverGetMatrix(solver->ilu);
+    lljbash.SetupCscMatrix(mat, smp->Size, smp->Elements);
+    long nnz = 0;
+    for (int col = 0; col < smp->Size; ++col) {
+        mat->col_ptr[col] = nnz;
+        for (ElementPtr e = smp->FirstInCol[col+1]; e; e = e->NextInCol, ++nnz) {
+            mat->row_idx[nnz] = e->Row - 1;
+            mat->value[nnz] = e->Real;
+        }
+    }
+    mat->col_ptr[smp->Size] = nnz;
+}
+
+void LLJBASH_InitPreconditoner(LLJBASH_Solver* solver) {
+    lljbash.IluSolverFactorize(solver->ilu, TRUE);
+}
+
+void LLJBASH_GmresSolve(LLJBASH_Solver* solver, double* x) {
+    lljbash.GmresSolve(solver->gmres, lljbash.IluSolverGetMatrix(solver->ilu), x, x, NULL);
+}
+
+int LLJBASH_NIiter(LLJBASH_Solver* solver, CKTcircuit* ckt, int maxIter) {
     double startTime, *OldCKTstate0 = NULL;
-    int error, i, j;
+    int error, i;
 
     int iterno = 0;
     int ipass = 0;
@@ -85,73 +100,8 @@ NIiter(CKTcircuit *ckt, int maxIter)
                 return (error);
             }
 
-            /* printf("after loading, before solving\n"); */
-            /* CKTdump(ckt); */
-
-            if (!(ckt->CKTniState & NIDIDPREORDER)) {
-                puts("preorder");
-                error = SMPpreOrder(ckt->CKTmatrix);
-                if (error) {
-                    ckt->CKTstat->STATnumIter += iterno;
-#ifdef STEPDEBUG
-                    printf("pre-order returned error \n");
-#endif
-                    FREE(OldCKTstate0);
-                    return(error); /* badly formed matrix */
-                }
-                ckt->CKTniState |= NIDIDPREORDER;
-            }
-
-            if ((ckt->CKTmode & MODEINITJCT) ||
-                ((ckt->CKTmode & MODEINITTRAN) && (iterno == 1)))
-            {
-                ckt->CKTniState |= NISHOULDREORDER;
-            }
-
-            if (ckt->CKTniState & NISHOULDREORDER) {
-                startTime = SPfrontEnd->IFseconds();
-                puts("reorder");
-                error = SMPreorder(ckt->CKTmatrix, ckt->CKTpivotAbsTol,
-                                   ckt->CKTpivotRelTol, ckt->CKTdiagGmin);
-                ckt->CKTstat->STATreorderTime +=
-                    SPfrontEnd->IFseconds() - startTime;
-                if (error) {
-                    /* new feature - we can now find out something about what is
-                     * wrong - so we ask for the troublesome entry
-                     */
-                    SMPgetError(ckt->CKTmatrix, &i, &j);
-                    SPfrontEnd->IFerrorf (ERR_WARNING, "singular matrix:  check nodes %s and %s\n", NODENAME(ckt, i), NODENAME(ckt, j));
-                    ckt->CKTstat->STATnumIter += iterno;
-#ifdef STEPDEBUG
-                    printf("reorder returned error \n");
-#endif
-                    FREE(OldCKTstate0);
-                    return(error); /* can't handle these errors - pass up! */
-                }
-                ckt->CKTniState &= ~NISHOULDREORDER;
-            } else {
-                startTime = SPfrontEnd->IFseconds();
-                error = SMPluFac(ckt->CKTmatrix, ckt->CKTpivotAbsTol,
-                                 ckt->CKTdiagGmin);
-                ckt->CKTstat->STATdecompTime +=
-                    SPfrontEnd->IFseconds() - startTime;
-                if (error) {
-                    if (error == E_SINGULAR) {
-                        ckt->CKTniState |= NISHOULDREORDER;
-                        DEBUGMSG(" forced reordering....\n");
-                        continue;
-                    }
-                    /* CKTload(ckt); */
-                    /* SMPprint(ckt->CKTmatrix, stdout); */
-                    /* seems to be singular - pass the bad news up */
-                    ckt->CKTstat->STATnumIter += iterno;
-#ifdef STEPDEBUG
-                    printf("lufac returned error \n");
-#endif
-                    FREE(OldCKTstate0);
-                    return(error);
-                }
-            }
+            lljbash_solver.ImportMatrix(solver, ckt->CKTmatrix);
+            lljbash_solver.InitPreconditoner(solver);
 
             /* moved it to here as if xspice is included then CKTload changes
                CKTnumStates the first time it is run */
@@ -161,7 +111,8 @@ NIiter(CKTcircuit *ckt, int maxIter)
                    (size_t) ckt->CKTnumStates * sizeof(double));
 
             startTime = SPfrontEnd->IFseconds();
-            SMPsolve(ckt->CKTmatrix, ckt->CKTrhs, ckt->CKTrhsSpare);
+            /*SMPsolve(ckt->CKTmatrix, ckt->CKTrhs, ckt->CKTrhsSpare);*/
+            lljbash_solver.GmresSolve(solver, ckt->CKTrhs);
             ckt->CKTstat->STATsolveTime +=
                 SPfrontEnd->IFseconds() - startTime;
 #ifdef STEPDEBUG
@@ -274,4 +225,36 @@ NIiter(CKTcircuit *ckt, int maxIter)
         /* CKTdump(ckt); */
     }
     /*NOTREACHED*/
+
+}
+
+struct LLJBASH_SolverFunctions lljbash_solver;
+struct LLJBASH_Functions lljbash;
+
+void __attribute__((constructor)) LLJBASH_LoadFunctions() {
+    lljbash.dlhandler = dlopen("/home/lilj/par_ilu0_gmres/lib/libpar-ilu0-gmres_c.so", RTLD_NOW);
+#define LLJBASH_LOAD_SYMBOL(SYMBOL) \
+    lljbash.SYMBOL = dlsym(lljbash.dlhandler, "LLJBASH_" #SYMBOL)
+    LLJBASH_LOAD_SYMBOL(SetupCscMatrix);
+    LLJBASH_LOAD_SYMBOL(DestroyCscMatrix);
+    LLJBASH_LOAD_SYMBOL(IluSolverCreate);
+    LLJBASH_LOAD_SYMBOL(IluSolverDestroy);
+    LLJBASH_LOAD_SYMBOL(IluSolverGetMatrix);
+    LLJBASH_LOAD_SYMBOL(IluSolverFactorize);
+    LLJBASH_LOAD_SYMBOL(GmresCreate);
+    LLJBASH_LOAD_SYMBOL(GmresDestroy);
+    LLJBASH_LOAD_SYMBOL(GmresGetParameters);
+    LLJBASH_LOAD_SYMBOL(GmresSetPreconditioner);
+    LLJBASH_LOAD_SYMBOL(GmresSolve);
+#undef LLJBASH_LOAD_SYMBOL
+    lljbash_solver.Init = LLJBASH_InitSolver;
+    lljbash_solver.Free = LLJBASH_FreeSolver;
+    lljbash_solver.ImportMatrix = LLJBASH_ImportMatrix;
+    lljbash_solver.InitPreconditoner = LLJBASH_InitPreconditoner;
+    lljbash_solver.GmresSolve = LLJBASH_GmresSolve;
+    lljbash_solver.NIiter = LLJBASH_NIiter;
+}
+
+void __attribute__((destructor)) LLJBASH_UnloadFunctions() {
+    dlclose(lljbash.dlhandler);
 }
