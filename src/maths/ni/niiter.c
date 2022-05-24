@@ -87,6 +87,10 @@ NIiter(CKTcircuit *ckt, int maxIter)
 
             /* printf("after loading, before solving\n"); */
             /* CKTdump(ckt); */
+            ckt->CKTstat->STATsolveTime +=
+                SPfrontEnd->IFseconds() - startTime;
+            /*SMPprint(ckt->CKTmatrix, NULL);*/
+            /*SMPprintRHS(ckt->CKTmatrix, NULL, ckt->CKTrhs, ckt->CKTirhs);*/
 
             if (!(ckt->CKTniState & NIDIDPREORDER)) {
                 puts("preorder");
@@ -162,8 +166,9 @@ NIiter(CKTcircuit *ckt, int maxIter)
 
             startTime = SPfrontEnd->IFseconds();
             SMPsolve(ckt->CKTmatrix, ckt->CKTrhs, ckt->CKTrhsSpare);
-            ckt->CKTstat->STATsolveTime +=
-                SPfrontEnd->IFseconds() - startTime;
+            /*SMPprintRHS(ckt->CKTmatrix, NULL, ckt->CKTrhs, ckt->CKTirhs);*/
+            /*static char buf[256];*/
+            /*fgets(buf, 256, stdin);*/
 #ifdef STEPDEBUG
             /*XXXX*/
             if (ckt->CKTrhs[0] != 0.0)

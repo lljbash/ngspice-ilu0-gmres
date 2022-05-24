@@ -16,11 +16,11 @@ Modified: 2005 Paolo Nenzi - Restructured
 #endif
 
 
-static int dynamic_gmin(CKTcircuit *, long int, long int, int);
-static int spice3_gmin(CKTcircuit *, long int, long int, int);
-static int new_gmin(CKTcircuit*, long int, long int, int);
-static int gillespie_src(CKTcircuit *, long int, long int, int);
-static int spice3_src(CKTcircuit *, long int, long int, int);
+int dynamic_gmin(CKTcircuit *, long int, long int, int);
+int spice3_gmin(CKTcircuit *, long int, long int, int);
+int new_gmin(CKTcircuit*, long int, long int, int);
+int gillespie_src(CKTcircuit *, long int, long int, int);
+int spice3_src(CKTcircuit *, long int, long int, int);
 
 
 int
@@ -144,7 +144,7 @@ CKTconvTest (CKTcircuit *ckt)
  * anything but CKTgshunt.
  */
 
-static int
+int
 dynamic_gmin (CKTcircuit *ckt, long int firstmode,
               long int continuemode, int iterlim)
 {
@@ -268,7 +268,7 @@ dynamic_gmin (CKTcircuit *ckt, long int firstmode,
  * anything but CKTgshunt.
  */
 
-static int
+int
 spice3_gmin (CKTcircuit *ckt, long int firstmode,
              long int continuemode, int iterlim)
 {
@@ -326,7 +326,7 @@ spice3_gmin (CKTcircuit *ckt, long int firstmode,
 }
 
 /* just step the real gmin found in every device model */
-static int
+int
 new_gmin(CKTcircuit* ckt, long int firstmode,
     long int continuemode, int iterlim)
 {
@@ -453,7 +453,7 @@ new_gmin(CKTcircuit* ckt, long int firstmode,
  * anything but 1.00000.
  */
 
-static int
+int
 gillespie_src (CKTcircuit *ckt, long int firstmode,
                long int continuemode, int iterlim)
 {
@@ -639,7 +639,7 @@ gillespie_src (CKTcircuit *ckt, long int firstmode,
  * anything but 1.00000.
  */
 
-static int
+int
 spice3_src (CKTcircuit *ckt, long int firstmode,
             long int continuemode, int iterlim)
 {

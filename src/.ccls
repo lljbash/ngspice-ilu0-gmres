@@ -13,3 +13,4 @@ clang
 -DEDITOR
 -I/usr/local/include
 -I./include
+-DXSPICE

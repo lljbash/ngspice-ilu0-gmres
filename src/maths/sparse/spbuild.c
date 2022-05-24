@@ -801,6 +801,7 @@ spcCreateElement(MatrixPtr Matrix, int  Row, int  Col,
 #if INITIALIZE
         pElement->pInitInfo = NULL;
 #endif
+        pElement->Fillin = Fillin;
 
 	/* Splice element into column. */
         pElement->NextInCol = *LastAddr;
@@ -861,6 +862,7 @@ spcCreateElement(MatrixPtr Matrix, int  Row, int  Col,
 #if INITIALIZE
         pElement->pInitInfo = NULL;
 #endif
+        pElement->Fillin = NO;
 
 	/* Splice element into column. */
         pElement->NextInCol = *LastAddr;

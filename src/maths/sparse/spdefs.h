@@ -452,6 +452,7 @@ struct  MatrixElement
 #if INITIALIZE
     void        *pInitInfo;
 #endif
+    int Fillin;
 };
 
 typedef  struct MatrixElement  *ElementPtr;

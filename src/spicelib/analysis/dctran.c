@@ -69,8 +69,16 @@ DCtran(CKTcircuit *ckt,
        int restart)   /* forced restart flag */
 {
     TRANan *job = (TRANan *) ckt->CKTcurJob;
+    char* pNGSPICE_ORIGINAL = getenv("NGSPICE_ORIGINAL");
+    /*char* pNGSPICE_DC_ORIGINAL = getenv("NGSPICE_DC_ORIGINAL");*/
+    bool ngspice_original = pNGSPICE_ORIGINAL && *pNGSPICE_ORIGINAL == '1';
+    /*bool ngspice_dc_original = ngspice_original ||*/
+        /*(pNGSPICE_DC_ORIGINAL && *pNGSPICE_DC_ORIGINAL == '1');*/
+    bool ngspice_dc_original = TRUE;
     LLJBASH_Solver solver;
-    lljbash_solver.Init(&solver);
+    if (!ngspice_original) {
+        lljbash_solver.Init(&solver);
+    }
 
     int i;
     double olddelta;
@@ -224,10 +232,15 @@ DCtran(CKTcircuit *ckt,
 /* gtri - end - wbk - Call EVTop if event-driven instances exist */
         } else
 #endif
-            converged = CKTop(ckt,
-                (ckt->CKTmode & MODEUIC) | MODETRANOP | MODEINITJCT,
-                (ckt->CKTmode & MODEUIC) | MODETRANOP | MODEINITFLOAT,
-                ckt->CKTdcMaxIter);
+            converged = ngspice_dc_original ?
+                CKTop(ckt,
+                     (ckt->CKTmode & MODEUIC) | MODETRANOP | MODEINITJCT,
+                     (ckt->CKTmode & MODEUIC) | MODETRANOP | MODEINITFLOAT,
+                     ckt->CKTdcMaxIter) :
+                lljbash_solver.CKTop(&solver, ckt,
+                     (ckt->CKTmode & MODEUIC) | MODETRANOP | MODEINITJCT,
+                     (ckt->CKTmode & MODEUIC) | MODETRANOP | MODEINITFLOAT,
+                     ckt->CKTdcMaxIter);
 
         if(converged != 0) {
             fprintf(stdout,"\nTransient solution failed -\n");
@@ -484,6 +497,13 @@ DCtran(CKTcircuit *ckt,
             ckt->CKTsenInfo->SENmode = save;
         }
 #endif
+        if (!ngspice_original) {
+            lljbash_solver.Free(&solver);
+        }
+        printf("%s time (seconds) = %f\n", ngspice_original ? "LU" : "Precondition",
+                                           ckt->CKTstat->STATtranDecompTime);
+        printf("%s time (seconds) = %f\n", ngspice_original ? "Substitution" : "GMRES",
+                                           ckt->CKTstat->STATtranSolveTime);
         return(OK);
     }
     if(SPfrontEnd->IFpauseTest()) {
@@ -751,8 +771,9 @@ resume:
 /* gtri - end - wbk - Set evt_step */
 #endif
 
-        /*converged = NIiter(ckt,ckt->CKTtranMaxIter);*/
-        converged = lljbash_solver.NIiter(&solver, ckt, ckt->CKTtranMaxIter);
+        converged = ngspice_original ?
+            NIiter(ckt,ckt->CKTtranMaxIter) :
+            lljbash_solver.NIiter(&solver, ckt, ckt->CKTtranMaxIter);
 
 #ifdef XSPICE
         if(ckt->evt->counts.num_insts > 0) {

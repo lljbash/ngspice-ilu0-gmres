@@ -95,6 +95,10 @@ void timediff(struct timeb *now, struct timeb *begin, int *sec, int *msec)
 double
 seconds(void)
 {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (double) now.tv_sec + (double) now.tv_nsec * 1e-9;
+#if 0
 #ifdef HAVE_GETRUSAGE
     int ret;
     struct rusage ruse;
@@ -130,4 +134,5 @@ seconds(void)
 #endif /* !FTIME */
 #endif /* !SYSV */
 #endif /* !BSD */
+#endif
 }

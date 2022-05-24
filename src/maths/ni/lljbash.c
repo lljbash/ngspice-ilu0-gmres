@@ -1,42 +1,142 @@
 #include "ngspice/lljbash.h"
+#include <stdlib.h>
+#include <stdint.h>
+#include <assert.h>
 #include <dlfcn.h>
 #include "ngspice/spmatrix.h"
 #include "../sparse/spdefs.h"
 #include "ngspice/trandefs.h"
 #include "ngspice/smpdefs.h"
+#include "ngspice/cktdefs.h"
 #include "ngspice/memory.h"
+#include "ngspice/cpextern.h"
+#ifdef XSPICE
+#include "ngspice/enh.h"
+#endif
 
 void LLJBASH_InitSolver(LLJBASH_Solver* solver) {
-    solver->ilu = lljbash.IluSolverCreate(8);
+    solver->ilu = lljbash.IluSolverCreate(0);
     solver->gmres = lljbash.GmresCreate();
+    lljbash.GmresGetParameters(solver->gmres)->tolerance = 1e-2;
     lljbash.GmresSetPreconditioner(solver->gmres, solver->ilu);
+    solver->smp = NULL;
+    solver->csr = *lljbash.CSR_MATRIX_DEFAULT;
+    solver->need_setup = TRUE;
+    solver->element_mapping = NULL;
+    solver->first_ilu = TRUE;
+    solver->intermediate = NULL;
 }
 
 void LLJBASH_FreeSolver(LLJBASH_Solver* solver) {
     lljbash.IluSolverDestroy(solver->ilu);
     lljbash.GmresDestroy(solver->gmres);
+    FREE(solver->element_mapping);
+    FREE(solver->intermediate);
 }
 
-void LLJBASH_ImportMatrix(LLJBASH_Solver* solver, const SMPmatrix* smp) {
-    LLJBASH_CscMatrix* mat = lljbash.IluSolverGetMatrix(solver->ilu);
-    lljbash.SetupCscMatrix(mat, smp->Size, smp->Elements);
+void LLJBASH_SetupMatrix(LLJBASH_Solver* solver, SMPmatrix* smp) {
+    assert(smp->RowsLinked);
+    solver->smp = smp;
+
+    LLJBASH_CsrMatrix* mat = &solver->csr;
+    lljbash.SetupCsrMatrix(mat, smp->Size, smp->Elements + smp->Size);
+    solver->element_mapping = TMALLOC(ElementPtr, mat->max_nnz);
     long nnz = 0;
-    for (int col = 0; col < smp->Size; ++col) {
-        mat->col_ptr[col] = nnz;
-        for (ElementPtr e = smp->FirstInCol[col+1]; e; e = e->NextInCol, ++nnz) {
-            mat->row_idx[nnz] = e->Row - 1;
-            mat->value[nnz] = e->Real;
+    for (int row = 0; row < smp->Size; ++row) {
+        mat->row_ptr[row] = nnz;
+        bool has_diag = FALSE;
+        for (ElementPtr e = smp->FirstInRow[row+1]; e; e = e->NextInRow) {
+            if (!e->Fillin) {
+                int col = e->Col - 1;
+                if (!has_diag && col >= row) {
+                    if (col > row) {
+                        mat->col_idx[nnz] = row;
+                        mat->value[nnz] = 0.0;
+                        solver->element_mapping[nnz] = NULL;
+                        ++nnz;
+                        printf("no diag %d\n", row);
+                    }
+                    has_diag = TRUE;
+                }
+                mat->col_idx[nnz] = col;
+                mat->value[nnz] = e->Real;
+                solver->element_mapping[nnz] = e;
+                ++nnz;
+            }
+        }
+        if (!has_diag) {
+            mat->col_idx[nnz] = row;
+            mat->value[nnz] = 0.0;
+            solver->element_mapping[nnz] = NULL;
+            ++nnz;
+            printf("no diag %d\n", row);
         }
     }
-    mat->col_ptr[smp->Size] = nnz;
+    mat->row_ptr[smp->Size] = nnz;
+
+    LLJBASH_CsrMatrix* ilumat = lljbash.IluSolverGetMatrix(solver->ilu);
+    lljbash.CopyCsrMatrix(ilumat, mat);
+
+    if (!solver->intermediate) {
+        solver->intermediate = TMALLOC(double, mat->size * 2);
+    }
+    double* sol = solver->intermediate + mat->size;
+    srand(114514);
+    for (int i = 0; i < mat->size; ++i) {
+        sol[i] = ((double) rand() / ((double) RAND_MAX + 1.0));
+    }
+
+    solver->need_setup = FALSE;
+
+    printf("n = %d, nnz = %ld\n", mat->size, nnz);
+}
+
+void LLJBASH_ImportMatrix(LLJBASH_Solver* solver, SMPmatrix* smp) {
+    if (solver->need_setup) {
+        LLJBASH_SetupMatrix(solver, smp);
+    }
+    else {
+        LLJBASH_CsrMatrix* mat = &solver->csr;
+        for (long i = 0; i < mat->row_ptr[mat->size]; ++i) {
+            mat->value[i] = solver->element_mapping[i] ? solver->element_mapping[i]->Real : 0.0;
+        }
+    }
 }
 
 void LLJBASH_InitPreconditoner(LLJBASH_Solver* solver) {
-    lljbash.IluSolverFactorize(solver->ilu, TRUE);
+    LLJBASH_CsrMatrix* ilumat = lljbash.IluSolverGetMatrix(solver->ilu);
+    memcpy(ilumat->value, solver->csr.value, sizeof(double[ilumat->row_ptr[ilumat->size]]));
+    lljbash.IluSolverFactorize(solver->ilu, solver->first_ilu);
+    solver->first_ilu = FALSE;
 }
 
-void LLJBASH_GmresSolve(LLJBASH_Solver* solver, double* x) {
-    lljbash.GmresSolve(solver->gmres, lljbash.IluSolverGetMatrix(solver->ilu), x, x, NULL);
+int LLJBASH_GmresSolve(LLJBASH_Solver* solver, double* x) {
+    LLJBASH_CsrMatrix* mat = &solver->csr;
+    int* p_ext_order = &solver->smp->IntToExtRowMap[mat->size];
+    double* rhs = solver->intermediate;
+    double* sol = solver->intermediate + mat->size;
+    for (int i = mat->size; i > 0; i--) {
+        rhs[i-1] = x[*(p_ext_order--)-1];
+    }
+    /*memcpy(sol, rhs, sizeof(double[mat->size]));*/
+    int its;
+    int success = lljbash.GmresSolve(solver->gmres, mat, rhs, sol, &its);
+    if (!success) {
+        /*for (int i = 0; i < mat->size; ++i) {*/
+            /*sol[i] = ((double) rand() / ((double) RAND_MAX + 1.0));*/
+        /*}*/
+        /*success = lljbash.GmresSolve(solver->gmres, mat, rhs, sol, NULL);*/
+        /*if (!success) {*/
+            fputs("\nGMRES failed!\n", stderr);
+            return E_INTERN;
+        /*}*/
+    }
+    printf("its: %d\n", its);
+    p_ext_order = &solver->smp->IntToExtColMap[mat->size];
+    for (int i = mat->size; i > 0; i--) {
+        x[*(p_ext_order--)-1] = sol[i-1];
+    }
+    return OK;
 }
 
 int LLJBASH_NIiter(LLJBASH_Solver* solver, CKTcircuit* ckt, int maxIter) {
@@ -100,8 +200,12 @@ int LLJBASH_NIiter(LLJBASH_Solver* solver, CKTcircuit* ckt, int maxIter) {
                 return (error);
             }
 
+            puts("import");
             lljbash_solver.ImportMatrix(solver, ckt->CKTmatrix);
+            startTime = SPfrontEnd->IFseconds();
+            puts("ILU0");
             lljbash_solver.InitPreconditoner(solver);
+            ckt->CKTstat->STATdecompTime += SPfrontEnd->IFseconds() - startTime;
 
             /* moved it to here as if xspice is included then CKTload changes
                CKTnumStates the first time it is run */
@@ -110,11 +214,18 @@ int LLJBASH_NIiter(LLJBASH_Solver* solver, CKTcircuit* ckt, int maxIter) {
             memcpy(OldCKTstate0, ckt->CKTstate0,
                    (size_t) ckt->CKTnumStates * sizeof(double));
 
+            /*SMPprint(ckt->CKTmatrix, NULL);*/
+            /*SMPprintRHS(ckt->CKTmatrix, NULL, ckt->CKTrhs, ckt->CKTirhs);*/
+            puts("GMRES");
             startTime = SPfrontEnd->IFseconds();
-            /*SMPsolve(ckt->CKTmatrix, ckt->CKTrhs, ckt->CKTrhsSpare);*/
-            lljbash_solver.GmresSolve(solver, ckt->CKTrhs);
-            ckt->CKTstat->STATsolveTime +=
-                SPfrontEnd->IFseconds() - startTime;
+            error = lljbash_solver.GmresSolve(solver, &ckt->CKTrhs[1]);
+            ckt->CKTstat->STATsolveTime += SPfrontEnd->IFseconds() - startTime;
+            if (error) {
+                exit(-1);
+            }
+            /*SMPprintRHS(ckt->CKTmatrix, NULL, ckt->CKTrhs, ckt->CKTirhs);*/
+            /*static char buf[256];*/
+            /*fgets(buf, 256, stdin);*/
 #ifdef STEPDEBUG
             /*XXXX*/
             if (ckt->CKTrhs[0] != 0.0)
@@ -228,6 +339,87 @@ int LLJBASH_NIiter(LLJBASH_Solver* solver, CKTcircuit* ckt, int maxIter) {
 
 }
 
+int dynamic_gmin(CKTcircuit *, long int, long int, int);
+int spice3_gmin(CKTcircuit *, long int, long int, int);
+int new_gmin(CKTcircuit*, long int, long int, int);
+int gillespie_src(CKTcircuit *, long int, long int, int);
+int spice3_src(CKTcircuit *, long int, long int, int);
+
+int LLJBASH_CKTop(LLJBASH_Solver* solver, CKTcircuit *ckt, long firstmode, long continuemode, int iterlim) {
+    int converged;
+
+#ifdef HAS_PROGREP
+    SetAnalyse("op", 0);
+#endif
+
+    ckt->CKTmode = firstmode;
+
+    if (!ckt->CKTnoOpIter) {
+#ifdef XSPICE
+        /* gtri - wbk - add convergence problem reporting flags */
+        ckt->enh->conv_debug.last_NIiter_call =
+            (ckt->CKTnumGminSteps <= 0) && (ckt->CKTnumSrcSteps <= 0);
+#endif
+        converged = LLJBASH_NIiter (solver, ckt, iterlim);
+        if (converged == 0)
+            return converged;   /* successfull */
+    } else {
+        converged = 1;          /* the 'go directly to gmin stepping' option */
+    }
+
+
+    /* no convergence on the first try, so we do something else */
+    /* first, check if we should try gmin stepping */
+
+    if (ckt->CKTnumGminSteps >= 1) {
+        if (ckt->CKTnumGminSteps == 1) {
+            /* only the old gmin */
+            if (cp_getvar("dyngmin", CP_BOOL, NULL, 0)) {
+                converged = dynamic_gmin(ckt, firstmode, continuemode, iterlim);
+            }
+            /* first the old gmin, then the new gmin */
+            else {
+                converged = dynamic_gmin(ckt, firstmode, continuemode, iterlim);
+                if(converged != 0) {
+                    converged = new_gmin(ckt, firstmode, continuemode, iterlim);
+                }
+
+            }
+        }
+        else {
+            converged = spice3_gmin(ckt, firstmode, continuemode, iterlim);
+        }
+        if (converged == 0) /* If gmin-stepping worked... move out */
+            return converged;
+    }
+
+    /* ... otherwise try stepping sources ...
+     * now, we'll try source stepping - we scale the sources
+     * to 0, converge, then start stepping them up until they
+     * are at their normal values
+     */
+
+    if (ckt->CKTnumSrcSteps >= 1) {
+        if (ckt->CKTnumSrcSteps == 1)
+            converged = gillespie_src(ckt, firstmode, continuemode, iterlim);
+        else
+            converged = spice3_src(ckt, firstmode, continuemode, iterlim);
+        if (converged == 0) /* If gmin-stepping worked... move out */
+            return converged;
+    }
+
+    /* If command 'optran' is not given, the function
+       returns immediately with the previous 'converged' */
+    converged = OPtran(ckt, converged);
+
+#ifdef XSPICE
+    /* gtri - wbk - add convergence problem reporting flags */
+    ckt->enh->conv_debug.last_NIiter_call = MIF_FALSE;
+#endif
+
+    return converged;
+}
+
 struct LLJBASH_SolverFunctions lljbash_solver;
 struct LLJBASH_Functions lljbash;
 
@@ -235,8 +427,10 @@ void __attribute__((constructor)) LLJBASH_LoadFunctions() {
     lljbash.dlhandler = dlopen("/home/lilj/par_ilu0_gmres/lib/libpar-ilu0-gmres_c.so", RTLD_NOW);
 #define LLJBASH_LOAD_SYMBOL(SYMBOL) \
     lljbash.SYMBOL = dlsym(lljbash.dlhandler, "LLJBASH_" #SYMBOL)
-    LLJBASH_LOAD_SYMBOL(SetupCscMatrix);
-    LLJBASH_LOAD_SYMBOL(DestroyCscMatrix);
+    LLJBASH_LOAD_SYMBOL(SetupCsrMatrix);
+    LLJBASH_LOAD_SYMBOL(DestroyCsrMatrix);
+    LLJBASH_LOAD_SYMBOL(CopyCsrMatrix);
+    LLJBASH_LOAD_SYMBOL(CSR_MATRIX_DEFAULT);
     LLJBASH_LOAD_SYMBOL(IluSolverCreate);
     LLJBASH_LOAD_SYMBOL(IluSolverDestroy);
     LLJBASH_LOAD_SYMBOL(IluSolverGetMatrix);
@@ -253,6 +447,7 @@ void __attribute__((constructor)) LLJBASH_LoadFunctions() {
     lljbash_solver.InitPreconditoner = LLJBASH_InitPreconditoner;
     lljbash_solver.GmresSolve = LLJBASH_GmresSolve;
     lljbash_solver.NIiter = LLJBASH_NIiter;
+    lljbash_solver.CKTop = LLJBASH_CKTop;
 }
 
 void __attribute__((destructor)) LLJBASH_UnloadFunctions() {
