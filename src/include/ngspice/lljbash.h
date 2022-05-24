@@ -2,8 +2,8 @@
 
 typedef struct {
     int size;
-    long max_nnz;
-    long* row_ptr;
+    int max_nnz;
+    int* row_ptr;
     int* col_idx;
     double* value;
 } LLJBASH_CsrMatrix;
@@ -42,7 +42,7 @@ extern struct LLJBASH_SolverFunctions {
 extern struct LLJBASH_Functions {
     void* dlhandler;
 
-    void (*SetupCsrMatrix)(LLJBASH_CsrMatrix*, int, long);
+    void (*SetupCsrMatrix)(LLJBASH_CsrMatrix*, int, int);
     void (*DestroyCsrMatrix)(LLJBASH_CsrMatrix*);
     void (*CopyCsrMatrix)(LLJBASH_CsrMatrix*, const LLJBASH_CsrMatrix*);
     const LLJBASH_CsrMatrix* CSR_MATRIX_DEFAULT;

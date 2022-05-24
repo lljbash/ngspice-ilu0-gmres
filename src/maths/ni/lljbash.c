@@ -41,7 +41,7 @@ void LLJBASH_SetupMatrix(LLJBASH_Solver* solver, SMPmatrix* smp) {
     LLJBASH_CsrMatrix* mat = &solver->csr;
     lljbash.SetupCsrMatrix(mat, smp->Size, smp->Elements + smp->Size);
     solver->element_mapping = TMALLOC(ElementPtr, mat->max_nnz);
-    long nnz = 0;
+    int nnz = 0;
     for (int row = 0; row < smp->Size; ++row) {
         mat->row_ptr[row] = nnz;
         bool has_diag = FALSE;
@@ -88,7 +88,7 @@ void LLJBASH_SetupMatrix(LLJBASH_Solver* solver, SMPmatrix* smp) {
 
     solver->need_setup = FALSE;
 
-    printf("n = %d, nnz = %ld\n", mat->size, nnz);
+    printf("n = %d, nnz = %d\n", mat->size, nnz);
 }
 
 void LLJBASH_ImportMatrix(LLJBASH_Solver* solver, SMPmatrix* smp) {
@@ -97,7 +97,7 @@ void LLJBASH_ImportMatrix(LLJBASH_Solver* solver, SMPmatrix* smp) {
     }
     else {
         LLJBASH_CsrMatrix* mat = &solver->csr;
-        for (long i = 0; i < mat->row_ptr[mat->size]; ++i) {
+        for (int i = 0; i < mat->row_ptr[mat->size]; ++i) {
             mat->value[i] = solver->element_mapping[i] ? solver->element_mapping[i]->Real : 0.0;
         }
     }
