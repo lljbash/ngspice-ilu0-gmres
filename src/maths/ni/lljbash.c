@@ -18,6 +18,8 @@ void LLJBASH_InitSolver(LLJBASH_Solver* solver) {
     solver->ilu = lljbash.IluSolverCreate(0);
     solver->gmres = lljbash.GmresCreate();
     lljbash.GmresGetParameters(solver->gmres)->tolerance = 1e-2;
+    lljbash.GmresGetParameters(solver->gmres)->krylov_subspace_dimension = 10;
+    lljbash.GmresGetParameters(solver->gmres)->max_iterations = 500;
     lljbash.GmresSetPreconditioner(solver->gmres, solver->ilu);
     solver->smp = NULL;
     solver->csr = *lljbash.CSR_MATRIX_DEFAULT;
@@ -25,6 +27,7 @@ void LLJBASH_InitSolver(LLJBASH_Solver* solver) {
     solver->element_mapping = NULL;
     solver->first_ilu = TRUE;
     solver->intermediate = NULL;
+    memset(&solver->stat, 0, sizeof(solver->stat));
 }
 
 void LLJBASH_FreeSolver(LLJBASH_Solver* solver) {
@@ -140,7 +143,7 @@ int LLJBASH_GmresSolve(LLJBASH_Solver* solver, double* x) {
 }
 
 int LLJBASH_NIiter(LLJBASH_Solver* solver, CKTcircuit* ckt, int maxIter) {
-    double startTime, *OldCKTstate0 = NULL;
+    double *OldCKTstate0 = NULL;
     int error, i;
 
     int iterno = 0;
@@ -202,10 +205,10 @@ int LLJBASH_NIiter(LLJBASH_Solver* solver, CKTcircuit* ckt, int maxIter) {
 
             puts("import");
             lljbash_solver.ImportMatrix(solver, ckt->CKTmatrix);
-            startTime = SPfrontEnd->IFseconds();
             puts("ILU0");
+            LLJBASH_Tic();
             lljbash_solver.InitPreconditoner(solver);
-            ckt->CKTstat->STATdecompTime += SPfrontEnd->IFseconds() - startTime;
+            solver->stat.total_precon_time += LLJBASH_Toc();
 
             /* moved it to here as if xspice is included then CKTload changes
                CKTnumStates the first time it is run */
@@ -217,9 +220,9 @@ int LLJBASH_NIiter(LLJBASH_Solver* solver, CKTcircuit* ckt, int maxIter) {
             /*SMPprint(ckt->CKTmatrix, NULL);*/
             /*SMPprintRHS(ckt->CKTmatrix, NULL, ckt->CKTrhs, ckt->CKTirhs);*/
             puts("GMRES");
-            startTime = SPfrontEnd->IFseconds();
+            LLJBASH_Tic();
             error = lljbash_solver.GmresSolve(solver, &ckt->CKTrhs[1]);
-            ckt->CKTstat->STATsolveTime += SPfrontEnd->IFseconds() - startTime;
+            solver->stat.total_gmres_time += LLJBASH_Toc();
             if (error) {
                 exit(-1);
             }
@@ -420,8 +423,12 @@ int LLJBASH_CKTop(LLJBASH_Solver* solver, CKTcircuit *ckt, long firstmode, long 
     return converged;
 }
 
+LLJBASH_Solver lljbash_global_solver;
+LLJBASH_Solver* lljbash_this = &lljbash_global_solver;
 struct LLJBASH_SolverFunctions lljbash_solver;
 struct LLJBASH_Functions lljbash;
+
+uint64_t LLJBASH_cycles;
 
 void __attribute__((constructor)) LLJBASH_LoadFunctions() {
     lljbash.dlhandler = dlopen("/home/lilj/par_ilu0_gmres/lib/libpar-ilu0-gmres_c.so", RTLD_NOW);
@@ -438,6 +445,7 @@ void __attribute__((constructor)) LLJBASH_LoadFunctions() {
     LLJBASH_LOAD_SYMBOL(GmresCreate);
     LLJBASH_LOAD_SYMBOL(GmresDestroy);
     LLJBASH_LOAD_SYMBOL(GmresGetParameters);
+    LLJBASH_LOAD_SYMBOL(GmresGetStat);
     LLJBASH_LOAD_SYMBOL(GmresSetPreconditioner);
     LLJBASH_LOAD_SYMBOL(GmresSolve);
 #undef LLJBASH_LOAD_SYMBOL

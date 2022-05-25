@@ -18,7 +18,13 @@ Modified: 2001 AlansFixes
 #include "ngspice/cktdefs.h"
 #include "ngspice/smpdefs.h"
 #include "ngspice/sperror.h"
+#include "ngspice/lljbash.h"
 
+static inline double* LLJBASH_StatTime() {
+    return lljbash_this->stat.dc_finished ?
+        &lljbash_this->stat.direct_transient_time :
+        &lljbash_this->stat.direct_dc_time;
+}
 
 /* NIiter() - return value is non-zero for convergence failure */
 
@@ -87,8 +93,6 @@ NIiter(CKTcircuit *ckt, int maxIter)
 
             /* printf("after loading, before solving\n"); */
             /* CKTdump(ckt); */
-            ckt->CKTstat->STATsolveTime +=
-                SPfrontEnd->IFseconds() - startTime;
             /*SMPprint(ckt->CKTmatrix, NULL);*/
             /*SMPprintRHS(ckt->CKTmatrix, NULL, ckt->CKTrhs, ckt->CKTirhs);*/
 
@@ -113,10 +117,12 @@ NIiter(CKTcircuit *ckt, int maxIter)
             }
 
             if (ckt->CKTniState & NISHOULDREORDER) {
-                startTime = SPfrontEnd->IFseconds();
                 puts("reorder");
+                startTime = SPfrontEnd->IFseconds();
+                LLJBASH_Tic();
                 error = SMPreorder(ckt->CKTmatrix, ckt->CKTpivotAbsTol,
                                    ckt->CKTpivotRelTol, ckt->CKTdiagGmin);
+                *LLJBASH_StatTime() += LLJBASH_Toc();
                 ckt->CKTstat->STATreorderTime +=
                     SPfrontEnd->IFseconds() - startTime;
                 if (error) {
@@ -135,8 +141,10 @@ NIiter(CKTcircuit *ckt, int maxIter)
                 ckt->CKTniState &= ~NISHOULDREORDER;
             } else {
                 startTime = SPfrontEnd->IFseconds();
+                LLJBASH_Tic();
                 error = SMPluFac(ckt->CKTmatrix, ckt->CKTpivotAbsTol,
                                  ckt->CKTdiagGmin);
+                *LLJBASH_StatTime() += LLJBASH_Toc();
                 ckt->CKTstat->STATdecompTime +=
                     SPfrontEnd->IFseconds() - startTime;
                 if (error) {
@@ -165,7 +173,11 @@ NIiter(CKTcircuit *ckt, int maxIter)
                    (size_t) ckt->CKTnumStates * sizeof(double));
 
             startTime = SPfrontEnd->IFseconds();
+            LLJBASH_Tic();
             SMPsolve(ckt->CKTmatrix, ckt->CKTrhs, ckt->CKTrhsSpare);
+            *LLJBASH_StatTime() += LLJBASH_Toc();
+            ckt->CKTstat->STATsolveTime +=
+                SPfrontEnd->IFseconds() - startTime;
             /*SMPprintRHS(ckt->CKTmatrix, NULL, ckt->CKTrhs, ckt->CKTirhs);*/
             /*static char buf[256];*/
             /*fgets(buf, 256, stdin);*/

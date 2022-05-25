@@ -75,9 +75,8 @@ DCtran(CKTcircuit *ckt,
     /*bool ngspice_dc_original = ngspice_original ||*/
         /*(pNGSPICE_DC_ORIGINAL && *pNGSPICE_DC_ORIGINAL == '1');*/
     bool ngspice_dc_original = TRUE;
-    LLJBASH_Solver solver;
     if (!ngspice_original) {
-        lljbash_solver.Init(&solver);
+        lljbash_solver.Init(lljbash_this);
     }
 
     int i;
@@ -237,10 +236,11 @@ DCtran(CKTcircuit *ckt,
                      (ckt->CKTmode & MODEUIC) | MODETRANOP | MODEINITJCT,
                      (ckt->CKTmode & MODEUIC) | MODETRANOP | MODEINITFLOAT,
                      ckt->CKTdcMaxIter) :
-                lljbash_solver.CKTop(&solver, ckt,
+                lljbash_solver.CKTop(lljbash_this, ckt,
                      (ckt->CKTmode & MODEUIC) | MODETRANOP | MODEINITJCT,
                      (ckt->CKTmode & MODEUIC) | MODETRANOP | MODEINITFLOAT,
                      ckt->CKTdcMaxIter);
+        lljbash_this->stat.dc_finished = TRUE;
 
         if(converged != 0) {
             fprintf(stdout,"\nTransient solution failed -\n");
@@ -497,13 +497,20 @@ DCtran(CKTcircuit *ckt,
             ckt->CKTsenInfo->SENmode = save;
         }
 #endif
+        printf("DC time (seconds) = %f\n", lljbash_this->stat.direct_dc_time);
         if (!ngspice_original) {
-            lljbash_solver.Free(&solver);
+            printf("Precondition time (seconds) = %f\n", lljbash_this->stat.total_precon_time);
+            printf("GMRES time (seconds) = %f\n", lljbash_this->stat.total_gmres_time);
+            LLJBASH_GmresStat* gmres_stat = lljbash.GmresGetStat(lljbash_this->gmres);
+            printf("GMRES:init time (seconds) = %f\n", gmres_stat->total_init_time);
+            printf("GMRES:fgmr time (seconds) = %f\n", gmres_stat->total_fgmr_time);
+            printf("GMRES:mv time (seconds) = %f\n", gmres_stat->total_mv_time);
+            printf("GMRES:precon time (seconds) = %f\n", gmres_stat->total_precon_time);
+            lljbash_solver.Free(lljbash_this);
         }
-        printf("%s time (seconds) = %f\n", ngspice_original ? "LU" : "Precondition",
-                                           ckt->CKTstat->STATtranDecompTime);
-        printf("%s time (seconds) = %f\n", ngspice_original ? "Substitution" : "GMRES",
-                                           ckt->CKTstat->STATtranSolveTime);
+        else {
+            printf("Transient time (seconds) = %f\n", lljbash_this->stat.direct_transient_time);
+        }
         return(OK);
     }
     if(SPfrontEnd->IFpauseTest()) {
@@ -773,7 +780,7 @@ resume:
 
         converged = ngspice_original ?
             NIiter(ckt,ckt->CKTtranMaxIter) :
-            lljbash_solver.NIiter(&solver, ckt, ckt->CKTtranMaxIter);
+            lljbash_solver.NIiter(lljbash_this, ckt, ckt->CKTtranMaxIter);
 
 #ifdef XSPICE
         if(ckt->evt->counts.num_insts > 0) {
