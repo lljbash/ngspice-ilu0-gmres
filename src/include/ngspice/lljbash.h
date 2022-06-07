@@ -41,6 +41,7 @@ typedef struct {
         int dc_finished;
         double direct_dc_time;
         double direct_transient_time;
+        double ilu_setup_time;
         double total_precon_time;
         double total_gmres_time;
     } stat;
@@ -68,7 +69,8 @@ extern struct LLJBASH_Functions {
     void* (*IluSolverCreate)(int);
     void (*IluSolverDestroy)(void*);
     LLJBASH_CsrMatrix* (*IluSolverGetMatrix)(void*);
-    int (*IluSolverFactorize)(void*, int);
+    int (*IluSolverSetup)(void*);
+    int (*IluSolverFactorize)(void*);
 
     void* (*GmresCreate)(void);
     void (*GmresDestroy)(void*);

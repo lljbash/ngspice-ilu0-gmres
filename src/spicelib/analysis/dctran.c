@@ -70,11 +70,11 @@ DCtran(CKTcircuit *ckt,
 {
     TRANan *job = (TRANan *) ckt->CKTcurJob;
     char* pNGSPICE_ORIGINAL = getenv("NGSPICE_ORIGINAL");
-    /*char* pNGSPICE_DC_ORIGINAL = getenv("NGSPICE_DC_ORIGINAL");*/
+    char* pNGSPICE_DC_ORIGINAL = getenv("NGSPICE_DC_ORIGINAL");
     bool ngspice_original = pNGSPICE_ORIGINAL && *pNGSPICE_ORIGINAL == '1';
-    /*bool ngspice_dc_original = ngspice_original ||*/
-        /*(pNGSPICE_DC_ORIGINAL && *pNGSPICE_DC_ORIGINAL == '1');*/
-    bool ngspice_dc_original = TRUE;
+    bool ngspice_dc_original = ngspice_original ||
+        (pNGSPICE_DC_ORIGINAL && *pNGSPICE_DC_ORIGINAL == '1');
+    /*bool ngspice_dc_original = TRUE;*/
     if (!ngspice_original) {
         lljbash_solver.Init(lljbash_this);
     }
@@ -497,8 +497,11 @@ DCtran(CKTcircuit *ckt,
             ckt->CKTsenInfo->SENmode = save;
         }
 #endif
-        printf("DC time (seconds) = %f\n", lljbash_this->stat.direct_dc_time);
+        if (ngspice_dc_original) {
+            printf("DC time (seconds) = %f\n", lljbash_this->stat.direct_dc_time);
+        }
         if (!ngspice_original) {
+            printf("ILU Setup time (seconds) = %f\n", lljbash_this->stat.ilu_setup_time);
             printf("Precondition time (seconds) = %f\n", lljbash_this->stat.total_precon_time);
             printf("GMRES time (seconds) = %f\n", lljbash_this->stat.total_gmres_time);
             LLJBASH_GmresStat* gmres_stat = lljbash.GmresGetStat(lljbash_this->gmres);

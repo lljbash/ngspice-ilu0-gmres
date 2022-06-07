@@ -195,7 +195,7 @@ spMNA_Preorder(MatrixPtr Matrix)
 	/* Search for zero diagonals with lone twins. */
         for (J = StartAt; J <= Size; J++)
         {
-	    if (Matrix->Diag[J] == NULL)
+	    if (Matrix->Diag[J] == NULL || Matrix->Diag[J]->Real == 0.0)
             {
 		Twins = CountTwins( Matrix, J, &pTwin1, &pTwin2 );
                 if (Twins == 1)
@@ -217,7 +217,7 @@ spMNA_Preorder(MatrixPtr Matrix)
         {
 	    for (J = StartAt; !Swapped && (J <= Size); J++)
             {
-		if (Matrix->Diag[J] == NULL)
+	    if (Matrix->Diag[J] == NULL || Matrix->Diag[J]->Real == 0.0)
                 {
 		    Twins = CountTwins( Matrix, J, &pTwin1, &pTwin2 );
                     SwapCols( Matrix, pTwin1, pTwin2 );

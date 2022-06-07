@@ -17,9 +17,9 @@
 void LLJBASH_InitSolver(LLJBASH_Solver* solver) {
     solver->ilu = lljbash.IluSolverCreate(0);
     solver->gmres = lljbash.GmresCreate();
-    lljbash.GmresGetParameters(solver->gmres)->tolerance = 1e-2;
-    lljbash.GmresGetParameters(solver->gmres)->krylov_subspace_dimension = 10;
-    lljbash.GmresGetParameters(solver->gmres)->max_iterations = 500;
+    lljbash.GmresGetParameters(solver->gmres)->tolerance = 1e-4;
+    lljbash.GmresGetParameters(solver->gmres)->krylov_subspace_dimension = 60;
+    lljbash.GmresGetParameters(solver->gmres)->max_iterations = 2500;
     lljbash.GmresSetPreconditioner(solver->gmres, solver->ilu);
     solver->smp = NULL;
     solver->csr = *lljbash.CSR_MATRIX_DEFAULT;
@@ -38,7 +38,10 @@ void LLJBASH_FreeSolver(LLJBASH_Solver* solver) {
 }
 
 void LLJBASH_SetupMatrix(LLJBASH_Solver* solver, SMPmatrix* smp) {
-    assert(smp->RowsLinked);
+    if (!smp->RowsLinked) {
+        SMPpreOrder(smp);
+        spcLinkRows(smp);
+    }
     solver->smp = smp;
 
     LLJBASH_CsrMatrix* mat = &solver->csr;
@@ -58,6 +61,11 @@ void LLJBASH_SetupMatrix(LLJBASH_Solver* solver, SMPmatrix* smp) {
                         solver->element_mapping[nnz] = NULL;
                         ++nnz;
                         printf("no diag %d\n", row);
+                    }
+                    else {
+                        if (e->Real == 0.0) {
+                            printf("diag %d is 0\n", row);
+                        }
                     }
                     has_diag = TRUE;
                 }
@@ -84,9 +92,10 @@ void LLJBASH_SetupMatrix(LLJBASH_Solver* solver, SMPmatrix* smp) {
         solver->intermediate = TMALLOC(double, mat->size * 2);
     }
     double* sol = solver->intermediate + mat->size;
-    srand(114514);
+    /*srand(114514);*/
     for (int i = 0; i < mat->size; ++i) {
-        sol[i] = ((double) rand() / ((double) RAND_MAX + 1.0));
+        /*sol[i] = ((double) rand() / ((double) RAND_MAX + 1.0));*/
+        sol[i] = 0.0;
     }
 
     solver->need_setup = FALSE;
@@ -109,8 +118,15 @@ void LLJBASH_ImportMatrix(LLJBASH_Solver* solver, SMPmatrix* smp) {
 void LLJBASH_InitPreconditoner(LLJBASH_Solver* solver) {
     LLJBASH_CsrMatrix* ilumat = lljbash.IluSolverGetMatrix(solver->ilu);
     memcpy(ilumat->value, solver->csr.value, sizeof(double[ilumat->row_ptr[ilumat->size]]));
-    lljbash.IluSolverFactorize(solver->ilu, solver->first_ilu);
-    solver->first_ilu = FALSE;
+    if (solver->first_ilu) {
+        LLJBASH_Tic();
+        lljbash.IluSolverSetup(solver->ilu);
+        solver->first_ilu = FALSE;
+        solver->stat.ilu_setup_time += LLJBASH_Toc();
+    }
+    LLJBASH_Tic();
+    lljbash.IluSolverFactorize(solver->ilu);
+    solver->stat.total_precon_time += LLJBASH_Toc();
 }
 
 int LLJBASH_GmresSolve(LLJBASH_Solver* solver, double* x) {
@@ -206,9 +222,7 @@ int LLJBASH_NIiter(LLJBASH_Solver* solver, CKTcircuit* ckt, int maxIter) {
             puts("import");
             lljbash_solver.ImportMatrix(solver, ckt->CKTmatrix);
             puts("ILU0");
-            LLJBASH_Tic();
             lljbash_solver.InitPreconditoner(solver);
-            solver->stat.total_precon_time += LLJBASH_Toc();
 
             /* moved it to here as if xspice is included then CKTload changes
                CKTnumStates the first time it is run */
@@ -441,6 +455,7 @@ void __attribute__((constructor)) LLJBASH_LoadFunctions() {
     LLJBASH_LOAD_SYMBOL(IluSolverCreate);
     LLJBASH_LOAD_SYMBOL(IluSolverDestroy);
     LLJBASH_LOAD_SYMBOL(IluSolverGetMatrix);
+    LLJBASH_LOAD_SYMBOL(IluSolverSetup);
     LLJBASH_LOAD_SYMBOL(IluSolverFactorize);
     LLJBASH_LOAD_SYMBOL(GmresCreate);
     LLJBASH_LOAD_SYMBOL(GmresDestroy);
