@@ -64,6 +64,8 @@ extern struct LLJBASH_Functions {
     void (*SetupCsrMatrix)(LLJBASH_CsrMatrix*, int, int);
     void (*DestroyCsrMatrix)(LLJBASH_CsrMatrix*);
     void (*CopyCsrMatrix)(LLJBASH_CsrMatrix*, const LLJBASH_CsrMatrix*);
+    void (*CopyCsrMatrixValues)(LLJBASH_CsrMatrix*, const LLJBASH_CsrMatrix*);
+    void (*CsrAmdOrder)(const LLJBASH_CsrMatrix*, int*, int*);
     const LLJBASH_CsrMatrix* CSR_MATRIX_DEFAULT;
 
     void* (*IluSolverCreate)(int);

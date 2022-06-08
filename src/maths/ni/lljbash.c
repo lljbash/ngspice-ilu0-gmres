@@ -37,70 +37,133 @@ void LLJBASH_FreeSolver(LLJBASH_Solver* solver) {
     FREE(solver->intermediate);
 }
 
-void LLJBASH_SetupMatrix(LLJBASH_Solver* solver, SMPmatrix* smp) {
-    if (!smp->RowsLinked) {
-        SMPpreOrder(smp);
-        spcLinkRows(smp);
+static void LLJBASH_DumpIntVec(const int* x, int n, const char* filename) {
+    FILE* fout = fopen(filename, "w");
+    for (int i = 0; i < n; ++i) {
+        fprintf(fout, "%d\n", x[i] + 1);
     }
-    solver->smp = smp;
+    fclose(fout);
+}
 
-    LLJBASH_CsrMatrix* mat = &solver->csr;
-    lljbash.SetupCsrMatrix(mat, smp->Size, smp->Elements + smp->Size);
-    solver->element_mapping = TMALLOC(ElementPtr, mat->max_nnz);
+static void LLJBASH_DumpDoubleVec(const double* x, int n, const char* filename) {
+    FILE* fout = fopen(filename, "w");
+    for (int i = 0; i < n; ++i) {
+        fprintf(fout, "%.16e\n", x[i]);
+    }
+    fclose(fout);
+}
+
+static void LLJBASH_DumpSmp(const SMPmatrix* smp, const char* filename) {
+    FILE* fout = fopen(filename, "w");
+    for (int row = 0; row < smp->Size; ++row) {
+        for (ElementPtr e = smp->FirstInRow[row+1]; e; e = e->NextInRow) {
+            if (!e->Fillin) {
+                int col = e->Col - 1;
+                double a = e->Real;
+                fprintf(fout, "%10d %10d %30.16e\n", row + 1, col + 1, a);
+            }
+        }
+    }
+    fclose(fout);
+}
+
+static void LLJBASH_SmpToCsr(const SMPmatrix* smp, LLJBASH_CsrMatrix* csr, bool with_value, ElementPtr* element_mapping) {
+    lljbash.SetupCsrMatrix(csr, smp->Size, smp->Elements);
     int nnz = 0;
     for (int row = 0; row < smp->Size; ++row) {
-        mat->row_ptr[row] = nnz;
+        csr->row_ptr[row] = nnz;
         bool has_diag = FALSE;
         for (ElementPtr e = smp->FirstInRow[row+1]; e; e = e->NextInRow) {
             if (!e->Fillin) {
                 int col = e->Col - 1;
-                if (!has_diag && col >= row) {
-                    if (col > row) {
-                        mat->col_idx[nnz] = row;
-                        mat->value[nnz] = 0.0;
-                        solver->element_mapping[nnz] = NULL;
-                        ++nnz;
-                        printf("no diag %d\n", row);
-                    }
-                    else {
-                        if (e->Real == 0.0) {
-                            printf("diag %d is 0\n", row);
-                        }
+                if (col == row) {
+                    if (e->Real == 0.0) {
+                        printf("diag %d is 0\n", row);
+                        exit(-1);
                     }
                     has_diag = TRUE;
                 }
-                mat->col_idx[nnz] = col;
-                mat->value[nnz] = e->Real;
-                solver->element_mapping[nnz] = e;
+                csr->col_idx[nnz] = col;
+                if (with_value) {
+                    csr->value[nnz] = e->Real;
+                }
+                if (element_mapping) {
+                    element_mapping[nnz] = e;
+                }
                 ++nnz;
             }
         }
         if (!has_diag) {
-            mat->col_idx[nnz] = row;
-            mat->value[nnz] = 0.0;
-            solver->element_mapping[nnz] = NULL;
-            ++nnz;
             printf("no diag %d\n", row);
+            exit(-1);
         }
     }
-    mat->row_ptr[smp->Size] = nnz;
+    csr->row_ptr[smp->Size] = nnz;
+}
+
+static void LLJBASH_SmpAmdOrder(SMPmatrix* smp) {
+    int n = smp->Size;
+    int* target_p = TMALLOC(int, n);
+    LLJBASH_CsrMatrix csr = *lljbash.CSR_MATRIX_DEFAULT;
+    LLJBASH_SmpToCsr(smp, &csr, FALSE, NULL);
+    puts("amd");
+    lljbash.CsrAmdOrder(&csr, target_p, NULL);
+    lljbash.DestroyCsrMatrix(&csr);
+    int* p = TMALLOC(int, n);
+    int* ip = TMALLOC(int, n);
+    for (int i = 0; i < n; ++i) {
+        p[i] = i;
+        ip[i] = i;
+    }
+    LLJBASH_DumpIntVec(target_p, n, "P");
+    LLJBASH_DumpSmp(smp, "NO");
+    puts("swapping");
+    for (int i = 0; i < n; ++i) {
+        int j = ip[target_p[i]];
+        if (i != j) {
+            assert(j > i);
+            spcRowExchange(smp, i + 1, j + 1);
+            spcColExchange(smp, i + 1, j + 1);
+            SWAP(ElementPtr, smp->Diag[i+1], smp->Diag[j+1]);
+            SWAP(int, p[i], p[j]);
+            ip[p[i]] = i;
+            ip[p[j]] = j;
+        }
+        assert(p[i] == target_p[i]);
+    }
+    LLJBASH_DumpSmp(smp, "AMD");
+    FREE(ip);
+    FREE(p);
+    FREE(target_p);
+}
+
+void LLJBASH_SetupMatrix(LLJBASH_Solver* solver, SMPmatrix* smp) {
+    if (!smp->RowsLinked) {
+        SMPpreOrder(smp);
+        spcLinkRows(smp);
+        LLJBASH_SmpAmdOrder(smp);
+    }
+    solver->smp = smp;
+    LLJBASH_CsrMatrix* csr = &solver->csr;
+    solver->element_mapping = TMALLOC(ElementPtr, smp->Elements);
+    LLJBASH_SmpToCsr(smp, csr, TRUE, solver->element_mapping);
 
     LLJBASH_CsrMatrix* ilumat = lljbash.IluSolverGetMatrix(solver->ilu);
-    lljbash.CopyCsrMatrix(ilumat, mat);
+    lljbash.CopyCsrMatrix(ilumat, csr);
 
     if (!solver->intermediate) {
-        solver->intermediate = TMALLOC(double, mat->size * 2);
+        solver->intermediate = TMALLOC(double, csr->size * 2);
     }
-    double* sol = solver->intermediate + mat->size;
+    double* sol = solver->intermediate + csr->size;
     /*srand(114514);*/
-    for (int i = 0; i < mat->size; ++i) {
+    for (int i = 0; i < csr->size; ++i) {
         /*sol[i] = ((double) rand() / ((double) RAND_MAX + 1.0));*/
         sol[i] = 0.0;
     }
 
     solver->need_setup = FALSE;
 
-    printf("n = %d, nnz = %d\n", mat->size, nnz);
+    printf("n = %d, nnz = %d\n", csr->size, csr->row_ptr[smp->Size]);
 }
 
 void LLJBASH_ImportMatrix(LLJBASH_Solver* solver, SMPmatrix* smp) {
@@ -117,7 +180,7 @@ void LLJBASH_ImportMatrix(LLJBASH_Solver* solver, SMPmatrix* smp) {
 
 void LLJBASH_InitPreconditoner(LLJBASH_Solver* solver) {
     LLJBASH_CsrMatrix* ilumat = lljbash.IluSolverGetMatrix(solver->ilu);
-    memcpy(ilumat->value, solver->csr.value, sizeof(double[ilumat->row_ptr[ilumat->size]]));
+    lljbash.CopyCsrMatrixValues(ilumat, &solver->csr);
     if (solver->first_ilu) {
         LLJBASH_Tic();
         lljbash.IluSolverSetup(solver->ilu);
@@ -451,6 +514,8 @@ void __attribute__((constructor)) LLJBASH_LoadFunctions() {
     LLJBASH_LOAD_SYMBOL(SetupCsrMatrix);
     LLJBASH_LOAD_SYMBOL(DestroyCsrMatrix);
     LLJBASH_LOAD_SYMBOL(CopyCsrMatrix);
+    LLJBASH_LOAD_SYMBOL(CopyCsrMatrixValues);
+    LLJBASH_LOAD_SYMBOL(CsrAmdOrder);
     LLJBASH_LOAD_SYMBOL(CSR_MATRIX_DEFAULT);
     LLJBASH_LOAD_SYMBOL(IluSolverCreate);
     LLJBASH_LOAD_SYMBOL(IluSolverDestroy);
